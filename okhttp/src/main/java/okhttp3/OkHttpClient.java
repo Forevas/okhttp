@@ -18,14 +18,15 @@ package okhttp3;
 import java.net.MalformedURLException;
 import java.net.Proxy;
 import java.net.ProxySelector;
+import java.net.Socket;
 import java.net.UnknownHostException;
 import java.security.GeneralSecurityException;
 import java.security.KeyStore;
-import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import javax.net.SocketFactory;
@@ -122,7 +123,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
       Protocol.HTTP_2, Protocol.HTTP_1_1);
 
   static final List<ConnectionSpec> DEFAULT_CONNECTION_SPECS = Util.immutableList(
-      ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT);
+      ConnectionSpec.MODERN_TLS, ConnectionSpec.CLEARTEXT);
 
   static {
     Internal.instance = new Internal() {
@@ -143,9 +144,18 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
         return pool.connectionBecameIdle(connection);
       }
 
-      @Override public RealConnection get(
+      @Override public RealConnection get(ConnectionPool pool, Address address,
+          StreamAllocation streamAllocation, Route route) {
+        return pool.get(address, streamAllocation, route);
+      }
+
+      @Override public boolean equalsNonHost(Address a, Address b) {
+        return a.equalsNonHost(b);
+      }
+
+      @Override public Socket deduplicate(
           ConnectionPool pool, Address address, StreamAllocation streamAllocation) {
-        return pool.get(address, streamAllocation);
+        return pool.deduplicate(address, streamAllocation);
       }
 
       @Override public void put(ConnectionPool pool, RealConnection connection) {
@@ -154,6 +164,10 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
 
       @Override public RouteDatabase routeDatabase(ConnectionPool connectionPool) {
         return connectionPool.routeDatabase;
+      }
+
+      @Override public int code(Response.Builder responseBuilder) {
+        return responseBuilder.code;
       }
 
       @Override
@@ -182,6 +196,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
   final List<ConnectionSpec> connectionSpecs;
   final List<Interceptor> interceptors;
   final List<Interceptor> networkInterceptors;
+  final EventListener.Factory eventListenerFactory;
   final ProxySelector proxySelector;
   final CookieJar cookieJar;
   final Cache cache;
@@ -214,6 +229,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
     this.connectionSpecs = builder.connectionSpecs;
     this.interceptors = Util.immutableList(builder.interceptors);
     this.networkInterceptors = Util.immutableList(builder.networkInterceptors);
+    this.eventListenerFactory = builder.eventListenerFactory;
     this.proxySelector = builder.proxySelector;
     this.cookieJar = builder.cookieJar;
     this.cache = builder.cache;
@@ -390,6 +406,11 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
     return networkInterceptors;
   }
 
+  // TODO(jwilson): make this public after the 3.7 release.
+  /*public*/ EventListener.Factory eventListenerFactory() {
+    return eventListenerFactory;
+  }
+
   /**
    * Prepares the {@code request} to be executed at some point in the future.
    */
@@ -401,7 +422,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
    * Uses {@code request} to connect a new web socket.
    */
   @Override public WebSocket newWebSocket(Request request, WebSocketListener listener) {
-    RealWebSocket webSocket = new RealWebSocket(request, listener, new SecureRandom());
+    RealWebSocket webSocket = new RealWebSocket(request, listener, new Random());
     webSocket.connect(this);
     return webSocket;
   }
@@ -417,6 +438,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
     List<ConnectionSpec> connectionSpecs;
     final List<Interceptor> interceptors = new ArrayList<>();
     final List<Interceptor> networkInterceptors = new ArrayList<>();
+    EventListener.Factory eventListenerFactory;
     ProxySelector proxySelector;
     CookieJar cookieJar;
     Cache cache;
@@ -442,6 +464,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
       dispatcher = new Dispatcher();
       protocols = DEFAULT_PROTOCOLS;
       connectionSpecs = DEFAULT_CONNECTION_SPECS;
+      eventListenerFactory = EventListener.factory(EventListener.NONE);
       proxySelector = ProxySelector.getDefault();
       cookieJar = CookieJar.NO_COOKIES;
       socketFactory = SocketFactory.getDefault();
@@ -467,6 +490,7 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
       this.connectionSpecs = okHttpClient.connectionSpecs;
       this.interceptors.addAll(okHttpClient.interceptors);
       this.networkInterceptors.addAll(okHttpClient.networkInterceptors);
+      this.eventListenerFactory = okHttpClient.eventListenerFactory;
       this.proxySelector = okHttpClient.proxySelector;
       this.cookieJar = okHttpClient.cookieJar;
       this.internalCache = okHttpClient.internalCache;
@@ -861,6 +885,22 @@ public class OkHttpClient implements Cloneable, Call.Factory, WebSocket.Factory 
 
     public Builder addNetworkInterceptor(Interceptor interceptor) {
       networkInterceptors.add(interceptor);
+      return this;
+    }
+
+    // TODO(jwilson): make this public after the 3.7 release.
+    /*public*/ Builder eventListener(EventListener eventListener) {
+      if (eventListener == null) throw new NullPointerException("eventListener == null");
+      this.eventListenerFactory = EventListener.factory(eventListener);
+      return this;
+    }
+
+    // TODO(jwilson): make this public after the 3.7 release.
+    /*public*/ Builder eventListenerFactory(EventListener.Factory eventListenerFactory) {
+      if (eventListenerFactory == null) {
+        throw new NullPointerException("eventListenerFactory == null");
+      }
+      this.eventListenerFactory = eventListenerFactory;
       return this;
     }
 

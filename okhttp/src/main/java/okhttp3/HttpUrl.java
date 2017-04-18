@@ -27,12 +27,14 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import okhttp3.internal.publicsuffix.PublicSuffixDatabase;
 import okio.Buffer;
 
 import static okhttp3.internal.Util.delimiterOffset;
 import static okhttp3.internal.Util.domainToAscii;
 import static okhttp3.internal.Util.skipLeadingAsciiWhitespace;
 import static okhttp3.internal.Util.skipTrailingAsciiWhitespace;
+import static okhttp3.internal.Util.verifyAsIpAddress;
 
 /**
  * A uniform resource locator (URL) with a scheme of either {@code http} or {@code https}. Use this
@@ -945,6 +947,30 @@ public final class HttpUrl {
     return url;
   }
 
+  /**
+   * Returns the domain name of this URL's {@link #host()} that is one level beneath the public
+   * suffix by consulting the <a href="https://publicsuffix.org">public suffix list</a>. Returns
+   * null if this URL's {@link #host()} is an IP address or is considered a public suffix by the
+   * public suffix list.
+   *
+   * <p>In general this method <strong>should not</strong> be used to test whether a domain is valid
+   * or routable. Instead, DNS is the recommended source for that information.
+   *
+   * <p><table summary="">
+   *   <tr><th>URL</th><th>{@code topPrivateDomain()}</th></tr>
+   *   <tr><td>{@code http://google.com}</td><td>{@code "google.com"}</td></tr>
+   *   <tr><td>{@code http://adwords.google.co.uk}</td><td>{@code "google.co.uk"}</td></tr>
+   *   <tr><td>{@code http://square}</td><td>null</td></tr>
+   *   <tr><td>{@code http://co.uk}</td><td>null</td></tr>
+   *   <tr><td>{@code http://localhost}</td><td>null</td></tr>
+   *   <tr><td>{@code http://127.0.0.1}</td><td>null</td></tr>
+   * </table>
+   */
+  public String topPrivateDomain() {
+    if (verifyAsIpAddress(host)) return null;
+    return PublicSuffixDatabase.get().getEffectiveTldPlusOne(host);
+  }
+
   public static final class Builder {
     String scheme;
     String encodedUsername = "";
@@ -1677,8 +1703,11 @@ public final class HttpUrl {
       return true; // Success.
     }
 
+    /** Encodes an IPv6 address in canonical form according to RFC 5952. */
     private static String inet6AddressToAscii(byte[] address) {
       // Go through the address looking for the longest run of 0s. Each group is 2-bytes.
+      // A run must be longer than one group (section 4.2.2).
+      // If there are multiple equal runs, the first one must be used (section 4.2.3).
       int longestRunOffset = -1;
       int longestRunLength = 0;
       for (int i = 0; i < address.length; i += 2) {
@@ -1687,7 +1716,7 @@ public final class HttpUrl {
           i += 2;
         }
         int currentRunLength = i - currentRunOffset;
-        if (currentRunLength > longestRunLength) {
+        if (currentRunLength > longestRunLength && currentRunLength >= 4) {
           longestRunOffset = currentRunOffset;
           longestRunLength = currentRunLength;
         }

@@ -52,9 +52,13 @@ public final class RealWebSocketTest {
     server.initWebSocket(random, 0);
   }
 
-  @After public void tearDown() {
+  @After public void tearDown() throws Exception {
     client.listener.assertExhausted();
     server.listener.assertExhausted();
+    server.source.close();
+    client.source.close();
+    server.webSocket.tearDown();
+    client.webSocket.tearDown();
   }
 
   @Test public void close() throws IOException {
@@ -199,7 +203,7 @@ public final class RealWebSocketTest {
     client.listener.assertFailure(ProtocolException.class, "Control frames must be final.");
 
     server.processNextFrame();
-    server.listener.assertFailure(EOFException.class, null);
+    server.listener.assertFailure(EOFException.class);
   }
 
   @Test public void protocolErrorInCloseResponseClosesConnection() throws IOException {
@@ -238,7 +242,7 @@ public final class RealWebSocketTest {
   @Test public void networkErrorReportedAsFailure() throws IOException {
     server.sink.close();
     client.processNextFrame();
-    client.listener.assertFailure(EOFException.class, null);
+    client.listener.assertFailure(EOFException.class);
   }
 
   @Test public void closeThrowingFailsConnection() throws IOException {
